@@ -5,7 +5,7 @@ use xcb::base::Connection;
 use xcb::xproto;
 
 use crate::color::{self, ARGB};
-use crate::draw::draw_magnifying_glass;
+use crate::draw::{draw_color_text, draw_magnifying_glass};
 use crate::pixel::PixelSquare;
 use crate::util::EnsureOdd;
 
@@ -69,9 +69,10 @@ fn create_new_xcursor(
     conn: &Connection,
     screenshot_pixels: &PixelSquare<&[ARGB]>,
     preview_width: u32,
+    center_color: ARGB,
 ) -> Result<u32> {
     Ok(unsafe {
-        let mut cursor_image = XcursorImageCreate(preview_width as i32, preview_width as i32);
+        let cursor_image = XcursorImageCreate(preview_width as i32, preview_width as i32);
 
         // set the "hot spot" - this is where the pointer actually is inside the image
         (*cursor_image).xhot = preview_width / 2;
@@ -94,6 +95,9 @@ fn create_new_xcursor(
 
         // draw our custom image
         draw_magnifying_glass(&mut cursor_pixels, screenshot_pixels, pixel_size);
+
+        // Draw color text on the cursor
+        draw_color_text(&mut cursor_pixels, center_color);
 
         // convert our XcursorImage into a cursor
         let cursor_id = XcursorImageLoadCursor(conn.get_raw_dpy(), cursor_image) as u32;
@@ -183,7 +187,11 @@ fn create_new_cursor(
 
     let (w, p) = get_window_rect_around_pointer(conn, screen, point, preview_width, scale)?;
     let pixels = PixelSquare::new(&p[..], w.into());
-    create_new_xcursor(conn, &pixels, preview_width)
+
+    // Get the center color (color at mouse position)
+    let center_color = pixels[(pixels.width() / 2, pixels.width() / 2)];
+
+    create_new_xcursor(conn, &pixels, preview_width, center_color)
 }
 
 pub fn wait_for_location(
