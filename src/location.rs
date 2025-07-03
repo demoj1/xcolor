@@ -11,6 +11,8 @@ use crate::util::EnsureOdd;
 
 // Left mouse button
 const SELECTION_BUTTON: xproto::Button = 1;
+// ESC key code
+const ESC_KEY: u8 = 9;
 const GRAB_MASK: u16 = (xproto::EVENT_MASK_BUTTON_PRESS | xproto::EVENT_MASK_POINTER_MOTION) as u16;
 
 // Exclusively grabs the pointer so we get all its events
@@ -30,6 +32,25 @@ fn grab_pointer(conn: &Connection, root: u32, cursor: u32) -> Result<()> {
 
     if reply.status() != xproto::GRAB_STATUS_SUCCESS as u8 {
         return Err(anyhow!("Could not grab pointer"));
+    }
+
+    Ok(())
+}
+
+// Exclusively grabs the keyboard so we get all its events
+fn grab_keyboard(conn: &Connection, root: u32) -> Result<()> {
+    let reply = xproto::grab_keyboard(
+        conn,
+        false,
+        root,
+        xbase::CURRENT_TIME,
+        xproto::GRAB_MODE_ASYNC as u8,
+        xproto::GRAB_MODE_ASYNC as u8,
+    )
+    .get_reply()?;
+
+    if reply.status() != xproto::GRAB_STATUS_SUCCESS as u8 {
+        return Err(anyhow!("Could not grab keyboard"));
     }
 
     Ok(())
@@ -178,6 +199,9 @@ pub fn wait_for_location(
     let mut cursor = create_new_cursor(conn, screen, preview_width, scale, None)?;
     grab_pointer(conn, root, cursor)?;
 
+    // Try to grab keyboard, but don't fail if it doesn't work
+    let keyboard_grabbed = grab_keyboard(conn, root).is_ok();
+
     let result = loop {
         let event = conn.wait_for_event();
         if let Some(event) = event {
@@ -195,6 +219,14 @@ pub fn wait_for_location(
                             break Some(pixels[0]);
                         }
                         _ => {}
+                    }
+                }
+                xproto::KEY_PRESS => {
+                    if keyboard_grabbed {
+                        let event: &xproto::KeyPressEvent = unsafe { xbase::cast_event(&event) };
+                        if event.detail() == ESC_KEY {
+                            break None;
+                        }
                     }
                 }
                 xproto::MOTION_NOTIFY => {
@@ -219,6 +251,9 @@ pub fn wait_for_location(
     };
 
     xproto::ungrab_pointer(conn, xbase::CURRENT_TIME);
+    if keyboard_grabbed {
+        xproto::ungrab_keyboard(conn, xbase::CURRENT_TIME);
+    }
     xproto::free_cursor(conn, cursor);
     conn.flush();
 
